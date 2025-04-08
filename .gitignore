@@ -1,0 +1,7 @@
+# Python virtual environments
+browser_use_env/
+venv/
+env/
+.env/
+__pycache__/
+*.py[cod]
