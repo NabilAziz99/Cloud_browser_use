@@ -1,11 +1,16 @@
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, Path
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
 import uvicorn
-from app.services.browser.browser_agent import execute_task # <-- Corrected import
 import os
-
+import uuid
+import logging
+from typing import Dict
+import asyncio
 from dotenv import load_dotenv
+
+from app.services.browser.browser_agent import create_browser_agent
+from app.services.task_manager import TaskManager, TaskStatus
 
 # Load environment variables
 load_dotenv()
@@ -13,15 +18,16 @@ load_dotenv()
 # Get API key from environment
 API_KEY = os.getenv("API_KEY", "default_insecure_key")
 
-
 app = FastAPI()
 security = HTTPBearer()
+
 
 # Define our TaskRequest model
 class TaskRequest(BaseModel):
     task: str
-    model_provider: str
-    model_name: str
+    model_provider: str = "openai_chat"
+    model_name: str = "gpt-4o"
+
 
 # Verify token function
 def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
@@ -29,11 +35,15 @@ def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
         raise HTTPException(status_code=401, detail="Invalid authentication credentials")
     return credentials.credentials
 
-# Updated route function
+
+# Create a new task
 @app.post("/api/v1/run-task")
 async def run_task(request: TaskRequest, token: str = Depends(verify_token)):
+    """
+    Create and start a new automation task.
+    """
     try:
-        await execute_task(
+        task_id, live_url = await TaskManager.create_task(
             task=request.task,
             model_provider=request.model_provider,
             model_name=request.model_name
@@ -42,13 +52,96 @@ async def run_task(request: TaskRequest, token: str = Depends(verify_token)):
         return {
             "status": "success",
             "message": f"Processing task: {request.task}",
+            "task_id": str(task_id),
+            "live_url": live_url
         }
     except Exception as e:
-        # Log the exception for debugging
-        print(f"Error processing task: {e}")
+        logging.error(f"Error processing task: {e}")
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Error processing task: {str(e)}")
+
+
+# Stop a task - updated to use path parameter
+@app.put("/api/v1/stop-task/{task_id}")
+async def stop_agent(
+        task_id: uuid.UUID = Path(..., description="The UUID of the task to stop"),
+        token: str = Depends(verify_token)
+):
+    """
+    Stop a running task.
+    """
+    try:
+        if await TaskManager.stop_task(task_id):
+            return {"status": "success", "message": f"Task {task_id} stopped."}
+        else:
+            raise HTTPException(status_code=404, detail="Task not found or already stopped.")
+    except Exception as e:
+        logging.error(f"Error stopping task: {e}")
+        raise HTTPException(status_code=500, detail=f"Error stopping task: {str(e)}")
+
+
+# Pause a task - updated to use path parameter
+@app.put("/api/v1/pause-task/{task_id}")
+async def pause_agent(
+        task_id: uuid.UUID = Path(..., description="The UUID of the task to pause"),
+        token: str = Depends(verify_token)
+):
+    """
+    Pause a running task.
+    """
+    try:
+        if await TaskManager.pause_task(task_id):
+            return {"status": "success", "message": f"Task {task_id} paused."}
+        else:
+            raise HTTPException(status_code=404, detail="Task not found or already paused.")
+    except Exception as e:
+        logging.error(f"Error pausing task: {e}")
+        raise HTTPException(status_code=500, detail=f"Error pausing task: {str(e)}")
+
+    # Resume a task - updated to use path parameter
+
+
+@app.put("/api/v1/resume-task/{task_id}")
+async def resume_agent(
+        task_id: uuid.UUID = Path(..., description="The UUID of the task to resume"),
+        token: str = Depends(verify_token)
+):
+    """
+    Resume a paused task.
+    """
+    try:
+        if await TaskManager.resume_task(task_id):
+            return {"status": "success", "message": f"Task {task_id} resumed."}
+        else:
+            raise HTTPException(status_code=404, detail="Task not found or not paused.")
+    except Exception as e:
+        logging.error(f"Error resuming task: {e}")
+        raise HTTPException(status_code=500, detail=f"Error resuming task: {str(e)}")
+
+
+# Get task status
+@app.get("/api/v1/task-status/{task_id}")
+async def get_task_status(
+        task_id: uuid.UUID = Path(..., description="The UUID of the task to check"),
+        token: str = Depends(verify_token)
+):
+    """
+    Get the current status of a task.
+    """
+    try:
+        status = await TaskManager.get_task_status(task_id)
+        return {
+            "status": "success",
+            "task_id": str(task_id),
+            "task_status": status
+        }
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Task {task_id} not found.")
+    except Exception as e:
+        logging.error(f"Error getting task status: {e}")
+        raise HTTPException(status_code=500, detail=f"Error getting task status: {str(e)}")
+
 
 @app.get("/health")
 async def health_check():
@@ -57,12 +150,12 @@ async def health_check():
 
 if __name__ == "__main__":
     print("--- Starting FastAPI server using Uvicorn ---")
-    print(f"API Key loaded (check .env): {'*' * (len(API_KEY) - 4)}{API_KEY[-4:]}" if API_KEY != "default_insecure_key" else "Default Key")
+    print(
+        f"API Key loaded (check .env): {'*' * (len(API_KEY) - 4)}{API_KEY[-4:]}" if API_KEY != "default_insecure_key" else "Default Key")
     print("Access API Docs at: http://127.0.0.1:8000/docs")
     uvicorn.run(
-        "app.main:app",       # Corresponds to: file_name:app_instance_name
-        host="127.0.0.1", # Listen on localhost
-        port=8000,        # Standard port
-        reload=True       # Enable auto-reload for development (watches for file changes)
+        "app.main:app",  # Corresponds to: file_name:app_instance_name
+        host="127.0.0.1",  # Listen on localhost
+        port=8000,  # Standard port
+        reload=True  # Enable auto-reload for development
     )
-

@@ -35,7 +35,7 @@ class LLMFactory:
         cls._creators[name.lower()] = creator
     
     @classmethod
-    def create_llm(cls, llm_type: str, **kwargs) -> BaseLanguageModel:
+    def create_llm(cls, llm_type: str, **kwargs) :
         """
         Create and return an LLM instance based on the specified type
         
