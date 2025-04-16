@@ -31,10 +31,13 @@ class TaskRequest(BaseModel):
 
 # Verify token function
 def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    logging.info(f"Received token: {credentials.credentials}")
+    logging.info(f"Expected token: {API_KEY}")
+    logging.info(f"Match? {credentials.credentials == API_KEY}")
+
     if credentials.credentials != API_KEY:
         raise HTTPException(status_code=401, detail="Invalid authentication credentials")
     return credentials.credentials
-
 
 # Create a new task
 @app.post("/api/v1/run-task")
@@ -120,28 +123,51 @@ async def resume_agent(
         raise HTTPException(status_code=500, detail=f"Error resuming task: {str(e)}")
 
 
-# Get task status
-@app.get("/api/v1/task-status/{task_id}")
-async def get_task_status(
+# Add these endpoints to app/main.py
+
+@app.get("/api/v1/task/{task_id}/status")
+async def get_task_status_only(
         task_id: uuid.UUID = Path(..., description="The UUID of the task to check"),
         token: str = Depends(verify_token)
 ):
     """
-    Get the current status of a task.
+    Get just the current status of a task.
+
+    Returns a string representing the task status:
+    - created: Task is initialized but not yet started
+    - running: Task is currently executing
+    - finished: Task has completed successfully
+    - stopped: Task was manually stopped
+    - paused: Task execution is temporarily paused
+    - failed: Task encountered an error and could not complete
     """
     try:
         status = await TaskManager.get_task_status(task_id)
-        return {
-            "status": "success",
-            "task_id": str(task_id),
-            "task_status": status
-        }
+        return status
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Task {task_id} not found.")
     except Exception as e:
         logging.error(f"Error getting task status: {e}")
         raise HTTPException(status_code=500, detail=f"Error getting task status: {str(e)}")
 
+
+@app.get("/api/v1/task/{task_id}")
+async def get_task_details(
+        task_id: uuid.UUID = Path(..., description="The UUID of the task to get details for"),
+        token: str = Depends(verify_token)
+):
+    """
+    Get comprehensive information about a task, including its current status,
+    steps completed, output (if finished), and other metadata.
+    """
+    try:
+        details = await TaskManager.get_task_details(task_id)
+        return details
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Task {task_id} not found.")
+    except Exception as e:
+        logging.error(f"Error getting task details: {e}")
+        raise HTTPException(status_code=500, detail=f"Error getting task details: {str(e)}")
 
 @app.get("/health")
 async def health_check():

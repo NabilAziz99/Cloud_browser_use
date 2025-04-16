@@ -226,3 +226,56 @@ class TaskManager:
             "status": status.value,
             "live_url": live_url
     }
+
+    # Update this method in app/services/task_manager.py
+
+    @classmethod
+    async def get_task_details(cls, task_id: uuid.UUID) -> dict:
+        """
+        Get comprehensive task details including live URL, steps, output and status.
+        """
+        if task_id not in cls._running_agents:
+            raise KeyError(f"Task with ID {task_id} not found")
+
+        agent, status = cls._running_agents[task_id]
+
+        # Get the live URL
+        live_url = cls._live_urls.get(task_id)
+
+        # Get creation timestamp
+        created_at = None
+        # Get finished timestamp if available
+        finished_at = None
+
+        # Get steps information if available
+        steps = []
+        if hasattr(agent.state, "history") and agent.state.history.history:
+            for i, history_item in enumerate(agent.state.history.history):
+                if history_item.model_output:
+                    steps.append({
+                        "id": str(uuid.uuid4()),  # Generate a unique ID for each step
+                        "step": i + 1,
+                        "evaluation_previous_goal": history_item.model_output.current_state.evaluation_previous_goal,
+                        "next_goal": history_item.model_output.current_state.next_goal
+                    })
+
+        # Get output if task is finished
+        output = None
+        if status == TaskStatus.FINISHED and agent.state.history.is_done():
+            output = agent.state.history.final_result()
+
+        # Get browser data if available (cookies, etc.)
+        browser_data = None
+        # You would need to implement logic to extract browser data here
+
+        return {
+            "id": str(task_id),
+            "task": agent.task,
+            "output": output,
+            "status": status.value,
+            "created_at": created_at or "2023-11-07T05:31:56Z",  # Placeholder - implement actual timestamp
+            "finished_at": finished_at,
+            "steps": steps,
+            "live_url": live_url,
+            "browser_data": browser_data
+        }
