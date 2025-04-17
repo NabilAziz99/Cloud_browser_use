@@ -17,20 +17,36 @@ from browser_use import Agent, Browser
 from browser_use.browser.browser import BrowserConfig
 
 
-
-async def create_browser_agent(task, model_provider: str = "openai_chat", model_name: str = "gpt-4o") -> tuple[Agent, str]:
+async def create_browser_agent(task, model_provider: str = "openai_chat", model_name: str = "gpt-4o") -> tuple[
+    Agent, str]:
     # Create a new Anchor Browser session
     session_id, cdp_url, live_view_url = await create_anchor_browser_session()
 
     if not session_id:
-        print("Failed to create Anchor Browser session - exiting")
-        raise RuntimeError("Could not create Anchor Browser session")
+        print("Failed to create Anchor Browser session - falling back to local browser")
+
+        # Configure for containerized environment
+        browser_args = [
+            "--disable-dev-shm-usage",
+            "--no-sandbox",
+            "--disable-setuid-sandbox",
+            "--disable-gpu",
+            "--disable-software-rasterizer"
+        ]
+
+        # Configure browser
+        browser_config = BrowserConfig(
+            headless=True,
+            extra_chromium_args=browser_args
+        )
+
+        # Initialize browser with config
+        browser = Browser(config=browser_config)
     else:
         print(f"Using Anchor Browser session: {session_id}")
         browser_config = BrowserConfig(cdp_url=cdp_url)
+        browser = Browser(config=browser_config)
 
-    # Initialize browser with config
-    browser = Browser(config=browser_config)
     agent = Agent(
         task=task,
         llm=LLMFactory.create_llm(model_provider, model_name=model_name),
