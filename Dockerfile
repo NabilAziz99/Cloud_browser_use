@@ -42,8 +42,8 @@ RUN if [ -f playwright_healthcheck.py ]; then chmod +x playwright_healthcheck.py
 # Install Playwright browsers
 RUN python -m playwright install chromium
 
-# Expose port for Railway
+# Expose port for Railway (default to 8080 if PORT isn't set)
 EXPOSE 8080
 
-# Run the application
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]
+# Run the application with proper shell interpretation of variables
+CMD uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8080}
