@@ -1,14 +1,4 @@
-FROM mcr.microsoft.com/playwright:v1.42.1-jammy
-
-# Install Python and pip
-RUN apt-get update && \
-    apt-get install -y python3 python3-pip && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
-
-# Create a symbolic link for python and pip
-RUN ln -sf /usr/bin/python3 /usr/bin/python && \
-    ln -sf /usr/bin/pip3 /usr/bin/pip
+FROM mcr.microsoft.com/playwright/python:v1.42.0-jammy
 
 # Set working directory
 WORKDIR /app
