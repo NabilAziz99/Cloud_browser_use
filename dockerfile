@@ -1,8 +1,15 @@
-# 1. Use an official Python runtime as parent image
-FROM python:3.11-slim
+# Use Ubuntu 22.04 as base image which has newer GLIBC versions
+FROM ubuntu:22.04
 
-# 2. Install system dependencies for Playwright browsers
+# Avoid prompts from apt
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install Python and dependencies for Playwright
 RUN apt-get update && apt-get install -y \
+    python3.11 \
+    python3.11-venv \
+    python3-pip \
+    python3-dev \
     wget \
     gnupg \
     fonts-liberation \
@@ -23,29 +30,37 @@ RUN apt-get update && apt-get install -y \
     libxkbcommon0 \
     libxrandr2 \
     xdg-utils \
+    git \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# 3. Set working directory
+# Create and activate virtual environment
+RUN python3.11 -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Set working directory
 WORKDIR /app
 
-# 4. Copy requirements file first (for better caching)
+# Copy requirements file for better caching
 COPY requirements.txt .
 
-# 5. Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+# Install Python dependencies
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
 
-# 6. Install Playwright browsers
+# Install Playwright browsers with dependencies
+# Specify the path to avoid version conflicts
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/playwright-browsers
 RUN python -m playwright install --with-deps chromium
 
-# 7. Copy application code
+# Copy application code
 COPY . .
 
-# 8. Set environment variable to force headless mode
+# Set environment variable to force headless mode
 ENV BROWSER_USE_HEADLESS=true
 
-# 9. Expose alternative port (8080)
+# Expose port 8080 for Railway
 EXPOSE 8080
 
-# 10. Run the application on the container's port 8000
-CMD uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8080}
+# Run the application on port 8080
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]
