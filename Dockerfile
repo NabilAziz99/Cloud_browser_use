@@ -1,5 +1,9 @@
 FROM mcr.microsoft.com/playwright:v1.42.1-jammy
 
+# Set noninteractive installation and timezone
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TZ=America/New_York
+
 # Install Python 3.11 and git
 RUN apt-get update && \
     apt-get install -y software-properties-common && \
