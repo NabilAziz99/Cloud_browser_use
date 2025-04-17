@@ -18,16 +18,13 @@ from browser_use.browser.browser import BrowserConfig
 
 
 
-async def create_browser_agent(task, model_provider: str = "openai_chat", model_name: str = "gpt-4o") -> tuple[
-    Agent, str]:
+async def create_browser_agent(task, model_provider: str = "openai_chat", model_name: str = "gpt-4o") -> tuple[Agent, str]:
     # Create a new Anchor Browser session
     session_id, cdp_url, live_view_url = await create_anchor_browser_session()
 
     if not session_id:
-        print("Failed to create Anchor Browser session")
-        browser_config = BrowserConfig(headless=False)
-        cdp_url = None
-        live_view_url = None
+        print("Failed to create Anchor Browser session - exiting")
+        raise RuntimeError("Could not create Anchor Browser session")
     else:
         print(f"Using Anchor Browser session: {session_id}")
         browser_config = BrowserConfig(cdp_url=cdp_url)
@@ -41,7 +38,6 @@ async def create_browser_agent(task, model_provider: str = "openai_chat", model_
     )
 
     return agent, live_view_url
-
 
 async def run(task, model_provider: str = "openai_chat", model_name: str = "gpt-4o") :
     llm = LLMFactory.create_llm(model_provider, model_name=model_name)
