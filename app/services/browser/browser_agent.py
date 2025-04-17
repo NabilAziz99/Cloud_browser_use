@@ -36,7 +36,6 @@ async def create_browser_agent(task, model_provider: str = "openai_chat", model_
         llm=LLMFactory.create_llm(model_provider, model_name=model_name),
         browser=browser
     )
-    print(await run("tell me a story about india"))
 
     return agent, live_view_url
 
