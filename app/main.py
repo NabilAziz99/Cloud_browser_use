@@ -18,7 +18,19 @@ load_dotenv()
 # Get API key from environment
 API_KEY = os.getenv("API_KEY", "default_insecure_key")
 
+
+# Create the app first
 app = FastAPI()
+
+@app.middleware("http")
+async def add_cors_headers(request, call_next):
+    response = await call_next(request)
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Credentials"] = "true"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "*"
+    return response
+
 security = HTTPBearer()
 
 
