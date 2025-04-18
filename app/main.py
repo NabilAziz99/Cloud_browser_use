@@ -66,7 +66,7 @@ async def run_task(request: TaskRequest, token: str = Depends(verify_token)):
 
 
 # Stop a task - updated to use path parameter
-@app.post("/api/v1/stop-task/{task_id}")
+@app.put("/api/v1/stop-task/{task_id}")
 async def stop_agent(
         task_id: uuid.UUID = Path(..., description="The UUID of the task to stop"),
         token: str = Depends(verify_token)
@@ -85,7 +85,7 @@ async def stop_agent(
 
 
 # Pause a task - updated to use path parameter
-@app.post("/api/v1/pause-task/{task_id}")
+@app.put("/api/v1/pause-task/{task_id}")
 async def pause_agent(
         task_id: uuid.UUID = Path(..., description="The UUID of the task to pause"),
         token: str = Depends(verify_token)
@@ -105,7 +105,7 @@ async def pause_agent(
     # Resume a task - updated to use path parameter
 
 
-@app.post("/api/v1/resume-task/{task_id}")
+@app.put("/api/v1/resume-task/{task_id}")
 async def resume_agent(
         task_id: uuid.UUID = Path(..., description="The UUID of the task to resume"),
         token: str = Depends(verify_token)
