@@ -1,5 +1,7 @@
-from fastapi import FastAPI, Depends, HTTPException, Path
+from fastapi import FastAPI, Depends, HTTPException, Path, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.middleware.cors import CORSMiddleware  # We'll try the official middleware again
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 import uvicorn
 import os
@@ -12,25 +14,56 @@ from dotenv import load_dotenv
 from app.services.browser.browser_agent import create_browser_agent
 from app.services.task_manager import TaskManager, TaskStatus
 
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 # Load environment variables
 load_dotenv()
 
 # Get API key from environment
 API_KEY = os.getenv("API_KEY", "default_insecure_key")
 
-
-# Create the app first
+# Create the app
 app = FastAPI()
 
-@app.middleware("http")
-async def add_cors_headers(request, call_next):
-    response = await call_next(request)
-    response.headers["Access-Control-Allow-Origin"] = "*"
-    response.headers["Access-Control-Allow-Credentials"] = "true"
-    response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
-    response.headers["Access-Control-Allow-Headers"] = "*"
-    return response
+# Add CORS middleware - try official version first
+try:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+    logger.info("Added FastAPI CORS middleware")
+except Exception as e:
+    logger.error(f"Failed to add FastAPI CORS middleware: {e}")
 
+
+    # If the official middleware fails, we'll use our custom one
+
+    @app.middleware("http")
+    async def custom_cors_middleware(request: Request, call_next):
+        # Handle preflight OPTIONS requests specially
+        if request.method == "OPTIONS":
+            response = JSONResponse(content={})
+        else:
+            response = await call_next(request)
+
+        # Add CORS headers to all responses
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS, PATCH"
+        response.headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type, Accept"
+
+        logger.info(f"Added CORS headers with custom middleware to {request.method} request")
+        return response
+
+
+    logger.info("Added custom CORS middleware as fallback")
+
+# Security
 security = HTTPBearer()
 
 
@@ -39,6 +72,13 @@ class TaskRequest(BaseModel):
     task: str
     model_provider: str = "openai_chat"
     model_name: str = "gpt-4o"
+
+
+# Add an OPTIONS handler for all paths to handle preflight requests
+@app.options("/{full_path:path}")
+async def options_handler(full_path: str):
+    """Handle OPTIONS requests for CORS preflight"""
+    return {}
 
 
 # Verify token function
@@ -50,6 +90,7 @@ def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
     if credentials.credentials != API_KEY:
         raise HTTPException(status_code=401, detail="Invalid authentication credentials")
     return credentials.credentials
+
 
 # Create a new task
 @app.post("/api/v1/run-task")
@@ -77,8 +118,9 @@ async def run_task(request: TaskRequest, token: str = Depends(verify_token)):
         raise HTTPException(status_code=500, detail=f"Error processing task: {str(e)}")
 
 
-# Stop a task - updated to use path parameter
+# Stop a task - support both PUT and POST
 @app.put("/api/v1/stop-task/{task_id}")
+@app.post("/api/v1/stop-task/{task_id}")
 async def stop_agent(
         task_id: uuid.UUID = Path(..., description="The UUID of the task to stop"),
         token: str = Depends(verify_token)
@@ -96,8 +138,9 @@ async def stop_agent(
         raise HTTPException(status_code=500, detail=f"Error stopping task: {str(e)}")
 
 
-# Pause a task - updated to use path parameter
+# Pause a task - support both PUT and POST
 @app.put("/api/v1/pause-task/{task_id}")
+@app.post("/api/v1/pause-task/{task_id}")
 async def pause_agent(
         task_id: uuid.UUID = Path(..., description="The UUID of the task to pause"),
         token: str = Depends(verify_token)
@@ -114,10 +157,10 @@ async def pause_agent(
         logging.error(f"Error pausing task: {e}")
         raise HTTPException(status_code=500, detail=f"Error pausing task: {str(e)}")
 
-    # Resume a task - updated to use path parameter
 
-
+# Resume a task - support both PUT and POST
 @app.put("/api/v1/resume-task/{task_id}")
+@app.post("/api/v1/resume-task/{task_id}")
 async def resume_agent(
         task_id: uuid.UUID = Path(..., description="The UUID of the task to resume"),
         token: str = Depends(verify_token)
@@ -135,8 +178,7 @@ async def resume_agent(
         raise HTTPException(status_code=500, detail=f"Error resuming task: {str(e)}")
 
 
-# Add these endpoints to app/main.py
-
+# Get task status
 @app.get("/api/v1/task/{task_id}/status")
 async def get_task_status_only(
         task_id: uuid.UUID = Path(..., description="The UUID of the task to check"),
@@ -144,14 +186,6 @@ async def get_task_status_only(
 ):
     """
     Get just the current status of a task.
-
-    Returns a string representing the task status:
-    - created: Task is initialized but not yet started
-    - running: Task is currently executing
-    - finished: Task has completed successfully
-    - stopped: Task was manually stopped
-    - paused: Task execution is temporarily paused
-    - failed: Task encountered an error and could not complete
     """
     try:
         status = await TaskManager.get_task_status(task_id)
@@ -163,14 +197,14 @@ async def get_task_status_only(
         raise HTTPException(status_code=500, detail=f"Error getting task status: {str(e)}")
 
 
+# Get task details
 @app.get("/api/v1/task/{task_id}")
 async def get_task_details(
         task_id: uuid.UUID = Path(..., description="The UUID of the task to get details for"),
         token: str = Depends(verify_token)
 ):
     """
-    Get comprehensive information about a task, including its current status,
-    steps completed, output (if finished), and other metadata.
+    Get comprehensive information about a task.
     """
     try:
         details = await TaskManager.get_task_details(task_id)
@@ -181,19 +215,22 @@ async def get_task_details(
         logging.error(f"Error getting task details: {e}")
         raise HTTPException(status_code=500, detail=f"Error getting task details: {str(e)}")
 
+
+# Health check endpoint
 @app.get("/health")
 async def health_check():
     return {"status": "healthy"}
 
 
 if __name__ == "__main__":
+    port = int(os.getenv("PORT", 8000))
     print("--- Starting FastAPI server using Uvicorn ---")
     print(
         f"API Key loaded (check .env): {'*' * (len(API_KEY) - 4)}{API_KEY[-4:]}" if API_KEY != "default_insecure_key" else "Default Key")
-    print("Access API Docs at: http://127.0.0.1:8000/docs")
+    print(f"Server running on port: {port}")
     uvicorn.run(
-        "app.main:app",  # Corresponds to: file_name:app_instance_name
-        host="127.0.0.1",  # Listen on localhost
-        port=8000,  # Standard port
-        reload=True  # Enable auto-reload for development
+        "app.main:app",
+        host="0.0.0.0",  # Using 0.0.0.0 instead of 127.0.0.1 for broader access
+        port=port,
+        reload=False  # Disable reload in production
     )
