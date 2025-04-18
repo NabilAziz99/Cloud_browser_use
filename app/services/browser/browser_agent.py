@@ -34,7 +34,7 @@ async def create_browser_agent(task, model_provider: str = "openai_chat", model_
             browser_config = BrowserConfig(
                 cdp_url=cdp_url,
                 # Add container-friendly browser args - these will be passed to local browser if used
-                browser_args=[
+                extra_chromium_args=[
                     "--disable-dev-shm-usage",
                     "--no-sandbox",
                     "--disable-setuid-sandbox",
