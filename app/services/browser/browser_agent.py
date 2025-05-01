@@ -1,5 +1,10 @@
 #!/usr/bin/env python
 # browser_agent.py
+#
+# Changes:
+# - Updated create_browser_agent to accept a sensitive_data parameter and pass it to the Agent constructor.
+#
+# This allows sensitive data to be securely passed to the agent for use in tasks, as per browser-use documentation.
 
 import asyncio
 import argparse
@@ -14,15 +19,35 @@ load_dotenv()
 # Import from your existing modules
 from app.services.browser.anchor_browser import create_anchor_browser_session
 from app.services.llm_factory import LLMFactory
-from browser_use import Agent, Browser
+from browser_use import Agent, Browser, Controller, ActionResult
 from browser_use.browser.browser import BrowserConfig
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+controller = Controller()
+@controller.registry.action("Task has been completed")
+async def done(text: str) -> ActionResult:
+    logger.info(f"** Done with task: {text}")
+    return ActionResult(is_done=True, extracted_content=text)
 
-async def create_browser_agent(task, model_provider: str = "openai_chat", model_name: str = "gpt-4o") -> tuple[
+@controller.registry.action("Get credentials for a website")
+async def get_credentials(website_url: str) -> ActionResult:
+    logger.info(f"** Get Credentials: {website_url}")
+    return ActionResult(extracted_content="username: obaid@magicallyhq.com and password: Ppak1408!!")
+
+@controller.registry.action("Stuck at captcha")
+async def ask_human(question: str) -> ActionResult:
+    logger.info(f"** Asking human: {question}")
+    return ActionResult(extracted_content=input(f'\n{question}\nInput: '))
+
+@controller.registry.action("Request human to takeover the session to unblock on a step")
+async def human_handover(request: str) -> ActionResult:
+    logger.info(f"Asking human: {request}")
+    return ActionResult(extracted_content=input(f'\n{request}\nInput: '))
+
+async def create_browser_agent(task, model_provider: str = "openai_chat", model_name: str = "gpt-4o", sensitive_data=None) -> tuple[
     Agent, str]:
     # First try to create an Anchor Browser session
     try:
@@ -48,7 +73,9 @@ async def create_browser_agent(task, model_provider: str = "openai_chat", model_
             agent = Agent(
                 task=task,
                 llm=LLMFactory.create_llm(model_provider, model_name=model_name),
-                browser=browser
+                browser=browser,
+                sensitive_data=sensitive_data,
+                controller=controller
             )
 
             return agent, live_view_url
@@ -89,7 +116,9 @@ async def create_browser_agent(task, model_provider: str = "openai_chat", model_
     agent = Agent(
         task=task,
         llm=LLMFactory.create_llm(model_provider, model_name=model_name),
-        browser=browser
+        browser=browser,
+        sensitive_data=sensitive_data,
+        controller=controller
     )
 
     # No live view URL for local browser

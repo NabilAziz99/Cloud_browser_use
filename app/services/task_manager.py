@@ -24,7 +24,7 @@ class TaskManager:
 
 
     @classmethod
-    async def create_task(cls, task: str, model_provider: str = "openai_chat", model_name: str = "gpt-4o") -> tuple[
+    async def create_task(cls, task: str, model_provider: str = "openai_chat", model_name: str = "gpt-4o", sensitive_data=None) -> tuple[
         uuid.UUID, str]:
         """
         Create a new task and return its ID and live URL for monitoring.
@@ -38,7 +38,8 @@ class TaskManager:
         agent, live_url = await create_browser_agent(
             task=task,
             model_provider=model_provider,
-            model_name=model_name
+            model_name=model_name,
+            sensitive_data=sensitive_data
         )
 
         # Store the agent and its status

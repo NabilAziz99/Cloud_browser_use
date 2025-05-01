@@ -5,7 +5,7 @@ import uvicorn
 import os
 import uuid
 import logging
-from typing import Dict
+from typing import Dict, Optional, Any
 import asyncio
 from dotenv import load_dotenv
 
@@ -27,6 +27,7 @@ class TaskRequest(BaseModel):
     task: str
     model_provider: str = "openai_chat"
     model_name: str = "gpt-4o"
+    sensitive_data: Optional[Dict[str, Any]] = None
 
 
 # Verify token function
@@ -49,7 +50,8 @@ async def run_task(request: TaskRequest, token: str = Depends(verify_token)):
         task_id, live_url = await TaskManager.create_task(
             task=request.task,
             model_provider=request.model_provider,
-            model_name=request.model_name
+            model_name=request.model_name,
+            sensitive_data=request.sensitive_data
         )
 
         return {
