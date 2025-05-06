@@ -37,11 +37,16 @@ async def done(text: str) -> ActionResult:
 @controller.registry.action("Get credentials for a website")
 async def get_credentials(website_url: str) -> ActionResult:
     """Action for retrieving credentials for a website."""
-    creds = "username: obaid@magicallyhq.com and password: Ppak1408!!"
+    creds = "username:  test@provision.ai and password: test123"
     logger.info(f"[ACTION] Get Credentials | Website: {website_url} | Credentials Provided: {creds}")
     return ActionResult(extracted_content=creds)
 
-@controller.registry.action("Stuck at captcha or looking for information while filling a form")
+@controller.registry.action("Need information to fill out a form field")
+async def get_form_data(form_field: str) -> ActionResult:
+    logger.info(f"[ACTION] Help me fill the form | Form Field: {form_field}")
+    return ActionResult(extracted_content=input(f'\n{form_field}\nInput: '))
+
+@controller.registry.action("Stuck at captcha ")
 async def ask_human(question: str) -> ActionResult:
     """Action for requesting human input when stuck at a captcha."""
     logger.info(f"[ACTION] Stuck at Captcha | Question: {question}")
