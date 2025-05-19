@@ -5,7 +5,7 @@ import uvicorn
 import os
 import uuid
 import logging
-from typing import Dict
+from typing import Dict, Optional, Any
 import asyncio
 from dotenv import load_dotenv
 
@@ -22,11 +22,15 @@ app = FastAPI()
 security = HTTPBearer()
 
 
+class FeedbackRequest(BaseModel):
+    feedback: str
+
 # Define our TaskRequest model
 class TaskRequest(BaseModel):
     task: str
     model_provider: str = "openai_chat"
     model_name: str = "gpt-4o"
+    sensitive_data: Optional[Dict[str, Any]] = None
 
 
 # Verify token function
@@ -49,7 +53,8 @@ async def run_task(request: TaskRequest, token: str = Depends(verify_token)):
         task_id, live_url = await TaskManager.create_task(
             task=request.task,
             model_provider=request.model_provider,
-            model_name=request.model_name
+            model_name=request.model_name,
+            sensitive_data=request.sensitive_data
         )
 
         return {
@@ -168,7 +173,90 @@ async def get_task_details(
     except Exception as e:
         logging.error(f"Error getting task details: {e}")
         raise HTTPException(status_code=500, detail=f"Error getting task details: {str(e)}")
+    
+    
+    
 
+@app.post("/api/v1/task/{task_id}/human-feedback")
+async def provide_human_feedback(
+    task_id: uuid.UUID,
+    feedback_request: FeedbackRequest,
+    token: str = Depends(verify_token)
+):
+    """
+    Provide human feedback to a paused agent and resume it.
+    
+    When an agent encounters a situation requiring human input,
+    it pauses and waits for feedback. This endpoint allows providing
+    that feedback and automatically resumes the agent.
+    """
+    try:
+        # First add the feedback (synchronous operation)
+        TaskManager.add_human_feedback(task_id, feedback_request.feedback)
+        
+        # Then resume the task (asynchronous operation)
+        success = await TaskManager.resume_task(task_id)
+        
+        if not success:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Could not resume task {task_id}. Feedback was recorded but task wasn't resumed."
+            )
+        
+        return {
+            "status": "success",
+            "message": f"Feedback provided and agent resumed for task {task_id}",
+            "task_id": str(task_id)
+        }
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Task {task_id} not found.")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logging.error(f"Error providing feedback: {e}")
+        raise HTTPException(status_code=500, detail=f"Error providing feedback: {str(e)}")
+
+@app.get("/api/v1/task/{task_id}/pending-request")
+async def get_pending_human_input_request(
+    task_id: uuid.UUID,
+    token: str = Depends(verify_token)
+):
+    """
+    Get details about any pending human input request for a task.
+    
+    Returns information about what the agent is asking for,
+    or null if there is no pending request.
+    """
+    from app.services.browser.controller_actions import pending_requests
+    
+    try:
+        # First check if task exists
+        if task_id not in TaskManager._running_agents:
+            raise KeyError(f"Task {task_id} not found")
+            
+        # Then check if there's a pending request
+        request_info = pending_requests.get(task_id)
+        
+        if not request_info:
+            return {
+                "has_pending_request": False,
+                "request": None
+            }
+            
+        return {
+            "has_pending_request": True,
+            "request": request_info
+        }
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Task {task_id} not found.")
+    except Exception as e:
+        logging.error(f"Error getting pending request: {e}")
+        raise HTTPException(status_code=500, detail=f"Error getting pending request: {str(e)}")
+    
+    
+    
+    
+    
 @app.get("/health")
 async def health_check():
     return {"status": "healthy"}

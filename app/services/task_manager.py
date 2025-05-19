@@ -1,30 +1,27 @@
+#!/usr/bin/env python
+# app/services/task_manager.py
+
 import asyncio
 import logging
 import uuid
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple, Any
 
+from app.services.task_states import TaskStatus
 from browser_use.agent.service import Agent
-from app.services.browser.browser_agent import create_browser_agent
 
-
-from enum import Enum
-
-class TaskStatus(Enum):
-    CREATED = "created"    # Task is initialized but not yet started
-    RUNNING = "running"    # Task is currently executing
-    FINISHED = "finished"  # Task has completed successfully
-    STOPPED = "stopped"    # Task was manually stopped
-    PAUSED = "paused"      # Task execution is temporarily paused
-    FAILED = "failed"      # Task encountered an error and could not complete
+# Configure logging
+logger = logging.getLogger(__name__)
 
 class TaskManager:
-    _running_agents: Dict[uuid.UUID, tuple[Agent, TaskStatus]] = {}
-    _running_tasks: Dict[uuid.UUID, asyncio.Task] = {}  # Fixed name (was _running_task in your code)
-    _live_urls: Dict[uuid.UUID, str] = {}
-
+    """
+    Manages tasks running in the system, providing task lifecycle operations.
+    """
+    _running_agents: Dict[uuid.UUID, Tuple[Agent, TaskStatus]] = {}
+    _running_tasks: Dict[uuid.UUID, asyncio.Task] = {}
+    _live_urls: Dict[uuid.UUID, str] = {}  # Added missing definition here
 
     @classmethod
-    async def create_task(cls, task: str, model_provider: str = "openai_chat", model_name: str = "gpt-4o") -> tuple[
+    async def create_task(cls, task: str, model_provider: str = "openai_chat", model_name: str = "gpt-4o", sensitive_data=None) -> Tuple[
         uuid.UUID, str]:
         """
         Create a new task and return its ID and live URL for monitoring.
@@ -34,16 +31,21 @@ class TaskManager:
         """
         task_id = uuid.uuid4()
 
+        # Import here to avoid circular import
+        from app.services.browser.browser_agent import create_browser_agent
+        
         # Create the browser agent and get the live URL
         agent, live_url = await create_browser_agent(
             task=task,
+            task_id=task_id,  # Pass the task_id
             model_provider=model_provider,
-            model_name=model_name
+            model_name=model_name,
+            sensitive_data=sensitive_data
         )
 
-        # Store the agent and its status
+        # Store the agent and its status directly
         cls._running_agents[task_id] = (agent, TaskStatus.CREATED)
-
+        
         # Store the live URL if available
         if live_url:
             cls._live_urls[task_id] = live_url
@@ -74,6 +76,7 @@ class TaskManager:
                 agent, _ = cls._running_agents[task_id]
                 cls._running_agents[task_id] = (agent, TaskStatus.FAILED)
             logging.error(f"Error in agent task {task_id}: {e}")
+
     @classmethod
     async def stop_task(cls, task_id: uuid.UUID) -> bool:
         """
@@ -108,13 +111,13 @@ class TaskManager:
                     except (asyncio.CancelledError, asyncio.TimeoutError):
                         pass
 
-                logging.info(f"Task {task_id} stopped successfully")
+                logger.info(f"Task {task_id} stopped successfully")
                 return True
             else:
-                logging.warning(f"Cannot stop task {task_id} - current status: {status}")
+                logger.warning(f"Cannot stop task {task_id} - current status: {status}")
                 return False
         else:
-            logging.warning(f"Task {task_id} not found.")
+            logger.warning(f"Task {task_id} not found.")
             return False
 
     @classmethod
@@ -155,21 +158,30 @@ class TaskManager:
 
             # Only pause if the task is currently running
             if status == TaskStatus.RUNNING:
-                # Call the agent's pause method
-                agent.pause()
+                try:
+                    # Call the agent's pause method
+                    agent.pause()
 
-                # Wait briefly for the agent to process the pause flag
-                await asyncio.sleep(0.2)
+                    # Wait briefly for the agent to process the pause flag
+                    await asyncio.sleep(0.2)
 
-                # Update the task status
-                cls._running_agents[task_id] = (agent, TaskStatus.PAUSED)
-                logging.info(f"Task {task_id} paused successfully")
-                return True
+                    # Update the task status
+                    cls._running_agents[task_id] = (agent, TaskStatus.PAUSED)
+                    
+                    # Also update the registry if available
+                    from app.services.browser.agent_registry import AgentRegistry
+                    AgentRegistry.update_agent_status(task_id, TaskStatus.PAUSED)
+                    
+                    logger.info(f"Task {task_id} paused successfully")
+                    return True
+                except Exception as e:
+                    logger.error(f"Error pausing task {task_id}: {e}")
+                    return False
             else:
-                logging.warning(f"Cannot pause task {task_id} - current status: {status}")
+                logger.warning(f"Cannot pause task {task_id} - current status: {status}")
                 return False
         else:
-            logging.warning(f"Task {task_id} not found.")
+            logger.warning(f"Task {task_id} not found.")
             return False
 
     @classmethod
@@ -188,94 +200,148 @@ class TaskManager:
 
             # Only resume if the task is currently paused
             if status == TaskStatus.PAUSED:
-                # Call the agent's resume method
-                agent.resume()
+                try:
+                    # Call the agent's resume method
+                    agent.resume()
 
-                # Wait briefly for the agent to process the resume flag
-                await asyncio.sleep(0.2)
+                    # Wait briefly for the agent to process the resume flag
+                    await asyncio.sleep(0.2)
 
-                # Update the task status
-                cls._running_agents[task_id] = (agent, TaskStatus.RUNNING)
-                logging.info(f"Task {task_id} resumed successfully")
-                return True
+                    # Update the task status
+                    cls._running_agents[task_id] = (agent, TaskStatus.RUNNING)
+                    
+                    # Also update the registry if available
+                    from app.services.browser.agent_registry import AgentRegistry
+                    AgentRegistry.update_agent_status(task_id, TaskStatus.RUNNING)
+                    
+                    logger.info(f"Task {task_id} resumed successfully")
+                    return True
+                except Exception as e:
+                    logger.error(f"Error resuming task {task_id}: {e}")
+                    return False
             else:
-                logging.warning(f"Cannot resume task {task_id} - current status: {status}")
+                logger.warning(f"Cannot resume task {task_id} - current status: {status}")
                 return False
         else:
-            logging.warning(f"Task {task_id} not found.")
+            logger.warning(f"Task {task_id} not found.")
             return False
 
+# Add this method to your TaskManager class
 
     @classmethod
-    async def get_task_details(cls, task_id: uuid.UUID) -> dict:
+    def add_human_feedback(cls, task_id: uuid.UUID, feedback: str) -> bool:
         """
-        Get task details including live URL.
+        Add human feedback to a paused task and prepare it for resuming.
+        
+        Args:
+            task_id: The UUID of the task to receive feedback
+            feedback: The feedback string to provide to the agent
+                
+        Returns:
+            bool: True if feedback was successfully added
+                
+        Raises:
+            KeyError: If task not found
+            ValueError: If task is not in PAUSED status
         """
         if task_id not in cls._running_agents:
+            logging.error(f"Cannot add feedback - Task with ID {task_id} not found")
             raise KeyError(f"Task with ID {task_id} not found")
-
+        
         agent, status = cls._running_agents[task_id]
+        if status != TaskStatus.PAUSED:
+            logging.error(f"Cannot add feedback - Task {task_id} is not paused (status: {status.value})")
+            raise ValueError(f"Task must be in PAUSED status to receive feedback, current status: {status.value}")
+        
+        # Clear any pending request information
+        from app.services.browser.controller_actions import pending_requests
+        if task_id in pending_requests:
+            # Optionally log what request is being fulfilled
+            request_info = pending_requests.pop(task_id)
+            logging.info(f"Fulfilling human input request for task {task_id}. Request: {request_info['prompt']}")
+        
+        # Add the feedback to the agent
+        try:
+            logging.info(f"Adding human feedback to task {task_id}: {feedback[:50]}...")
+            agent.add_new_task(feedback)
+            return True
+        except Exception as e:
+            logging.error(f"Error adding feedback to task {task_id}: {e}")
+            raise
 
-        # Get the live URL
-        live_url = cls._live_urls.get(task_id)
 
-        # Basic implementation for now
-        return {
-            "id": str(task_id),
-            "task": agent.task,
-            "status": status.value,
-            "live_url": live_url
-    }
-
-    # Update this method in app/services/task_manager.py
-
+    # TODO: Currently its creating an new ID for each step every single api while, which makes it inconsisten
     @classmethod
     async def get_task_details(cls, task_id: uuid.UUID) -> dict:
         """
         Get comprehensive task details including live URL, steps, output and status.
         """
-        if task_id not in cls._running_agents:
-            raise KeyError(f"Task with ID {task_id} not found")
+        try:
+            logging.info(f"Attempting to get details for task {task_id}")
+            
+            if task_id not in cls._running_agents:
+                logging.warning(f"Task {task_id} not found in _running_agents")
+                raise KeyError(f"Task with ID {task_id} not found")
 
-        agent, status = cls._running_agents[task_id]
+            agent, status = cls._running_agents[task_id]
+            logging.info(f"Found agent for task {task_id} with status {status.value}")
 
-        # Get the live URL
-        live_url = cls._live_urls.get(task_id)
+            # Get the live URL (initialize if needed)
+            if not hasattr(cls, "_live_urls"):
+                cls._live_urls = {}
+            live_url = cls._live_urls.get(task_id)
 
-        # Get creation timestamp
-        created_at = None
-        # Get finished timestamp if available
-        finished_at = None
+            # Basic response that should always work
+            details = {
+                "id": str(task_id),
+                "task": getattr(agent, "task", "Unknown task"),
+                "status": status.value,
+                "created_at": "2023-11-07T05:31:56Z",  # Placeholder
+                "finished_at": None,
+                "steps": [],
+                "output": None,
+                "live_url": live_url,
+                "browser_data": None
+            }
 
-        # Get steps information if available
-        steps = []
-        if hasattr(agent.state, "history") and agent.state.history.history:
-            for i, history_item in enumerate(agent.state.history.history):
-                if history_item.model_output:
-                    steps.append({
-                        "id": str(uuid.uuid4()),  # Generate a unique ID for each step
-                        "step": i + 1,
-                        "evaluation_previous_goal": history_item.model_output.current_state.evaluation_previous_goal,
-                        "next_goal": history_item.model_output.current_state.next_goal
-                    })
+            # Try to get steps information - with full exception handling
+            try:
+                if hasattr(agent, "state"):
+                    if hasattr(agent.state, "history") and agent.state.history:
+                        if hasattr(agent.state.history, "history") and agent.state.history.history:
+                            for i, history_item in enumerate(agent.state.history.history):
+                                step = {
+                                    "id": str(uuid.uuid4()),  # Generate a unique ID for each step
+                                    "step": i + 1,
+                                    "evaluation_previous_goal": "N/A",
+                                    "next_goal": "N/A"
+                                }
+                                
+                                if hasattr(history_item, "model_output") and history_item.model_output:
+                                    if hasattr(history_item.model_output, "current_state"):
+                                        current_state = history_item.model_output.current_state
+                                        if hasattr(current_state, "evaluation_previous_goal"):
+                                            step["evaluation_previous_goal"] = current_state.evaluation_previous_goal
+                                        if hasattr(current_state, "next_goal"):
+                                            step["next_goal"] = current_state.next_goal
+                                
+                                details["steps"].append(step)
+            except Exception as e:
+                logging.error(f"Error getting step details for task {task_id}: {e}")
+                # Continue without failing the whole request
 
-        # Get output if task is finished
-        output = None
-        if status == TaskStatus.FINISHED and agent.state.history.is_done():
-            output = agent.state.history.final_result()
+            # Get output if task is finished - with exception handling
+            try:
+                if status == TaskStatus.FINISHED:
+                    if hasattr(agent, "state") and hasattr(agent.state, "history"):
+                        if hasattr(agent.state.history, "is_done") and agent.state.history.is_done():
+                            if hasattr(agent.state.history, "final_result"):
+                                details["output"] = agent.state.history.final_result()
+            except Exception as e:
+                logging.error(f"Error getting output for task {task_id}: {e}")
+                # Continue without failing the whole request
 
-        # Get browser data if available (cookies, etc.)
-        browser_data = None
-        # You would need to implement logic to extract browser data here
-
-        return {
-            "id": str(task_id),
-            "task": agent.task,
-            "output": output,
-            "status": status.value,
-            "created_at": created_at or "2023-11-07T05:31:56Z",  # Placeholder - implement actual timestamp
-            "finished_at": finished_at,
-            "steps": steps,
-            "live_url": live_url,
-            "browser_data": browser_data
-        }
+            return details
+        except Exception as e:
+            logging.error(f"Unexpected error in get_task_details for task {task_id}: {e}", exc_info=True)
+            raise
