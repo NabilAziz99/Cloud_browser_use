@@ -1,19 +1,29 @@
 #!/usr/bin/env python
-# browser_agent.py
-#
-# Changes:
-# - Refactored for maintainability: split long functions into helpers, improved type hints and docstrings, organized imports, and standardized logging messages. No logic was changed.
+# app/services/browser/browser_agent.py
 
 import argparse
 import asyncio
 import logging
 import os
+import uuid
 from typing import Any, Optional, Tuple
 from dotenv import load_dotenv
-from browser_use import Agent, Browser, Controller, ActionResult
+from browser_use import Agent, Browser, Controller
 from browser_use.browser.browser import BrowserConfig
 from app.services.browser.anchor_browser import create_anchor_browser_session
 from app.services.llm_factory import LLMFactory
+from app.services.task_states import TaskStatus
+from app.services.browser.agent_registry import AgentRegistry, current_task_id
+
+# Import controller actions
+from app.services.browser.controller_actions import (
+    done, 
+    apple_hello, 
+    get_credentials, 
+    get_form_data, 
+    ask_human, 
+    human_handover
+)
 
 # Load environment variables
 load_dotenv()
@@ -22,41 +32,16 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Create controller and register actions
 controller = Controller()
+controller.registry.action("Task has been completed")(done)
+controller.registry.action("Say HEY1234 if we're on Apple website")(apple_hello)
+controller.registry.action("Get credentials for a website")(get_credentials)
+controller.registry.action("Need information to fill out a form field")(get_form_data)
+controller.registry.action("Stuck at captcha")(ask_human)
+controller.registry.action("Request human to takeover the session to unblock on a step")(human_handover)
 
-def _log_and_return_action(action: str, detail: str, is_done: bool = False) -> ActionResult:
-    """Helper to log and return an ActionResult."""
-    logger.info(f"[ACTION] {action} | Detail: {detail}")
-    return ActionResult(is_done=is_done, extracted_content=detail)
-
-@controller.registry.action("Task has been completed")
-async def done(text: str) -> ActionResult:
-    """Action for marking a task as completed."""
-    return _log_and_return_action("Task Completed", text, is_done=True)
-
-@controller.registry.action("Get credentials for a website")
-async def get_credentials(website_url: str) -> ActionResult:
-    """Action for retrieving credentials for a website."""
-    creds = "username:  test@provision.ai and password: test123"
-    logger.info(f"[ACTION] Get Credentials | Website: {website_url} | Credentials Provided: {creds}")
-    return ActionResult(extracted_content=creds)
-
-@controller.registry.action("Need information to fill out a form field")
-async def get_form_data(form_field: str) -> ActionResult:
-    logger.info(f"[ACTION] Help me fill the form | Form Field: {form_field}")
-    return ActionResult(extracted_content=input(f'\n{form_field}\nInput: '))
-
-@controller.registry.action("Stuck at captcha ")
-async def ask_human(question: str) -> ActionResult:
-    """Action for requesting human input when stuck at a captcha."""
-    logger.info(f"[ACTION] Stuck at Captcha | Question: {question}")
-    return ActionResult(extracted_content=input(f'\n{question}\nInput: '))
-
-@controller.registry.action("Request human to takeover the session to unblock on a step")
-async def human_handover(request: str) -> ActionResult:
-    """Action for requesting human takeover of the session."""
-    logger.info(f"[ACTION] Human Handover | Request: {request}")
-    return ActionResult(extracted_content=input(f'\n{request}\nInput: '))
+# ==================== BROWSER CONFIGURATION ====================
 
 def _is_container_environment() -> bool:
     """Check if running inside a container environment."""
@@ -98,8 +83,11 @@ def _create_agent(task: str, model_provider: str, model_name: str, browser: Brow
         controller=controller
     )
 
+# ==================== AGENT CREATION AND EXECUTION ====================
+
 async def create_browser_agent(
     task: str,
+    task_id: uuid.UUID = None,
     model_provider: str = "openai_chat",
     model_name: str = "gpt-4o",
     sensitive_data: Any = None
@@ -108,6 +96,14 @@ async def create_browser_agent(
     Create a browser agent, preferring Anchor Browser if available, otherwise fallback to local browser.
     Returns a tuple of (Agent, live_view_url or None).
     """
+    # Create task ID if not provided
+    if task_id is None:
+        task_id = uuid.uuid4()
+    
+    # Set current task ID for controller actions context
+    global current_task_id
+    current_task_id = task_id
+    
     try:
         logger.info("[AGENT] Attempting to create Anchor Browser session...")
         session_id, cdp_url, live_view_url = await create_anchor_browser_session()
@@ -125,9 +121,11 @@ async def create_browser_agent(
             )
             browser = Browser(config=browser_config)
             agent = _create_agent(task, model_provider, model_name, browser, sensitive_data)
+            AgentRegistry.register_agent(agent, task_id)
             return agent, live_view_url
     except Exception as e:
         logger.error(f"[AGENT] Error creating Anchor Browser session: {e}", exc_info=True)
+    
     # Fallback to local browser
     is_container = _is_container_environment()
     if is_container:
@@ -135,6 +133,7 @@ async def create_browser_agent(
     browser_config = _create_browser_config(is_container)
     browser = Browser(config=browser_config)
     agent = _create_agent(task, model_provider, model_name, browser, sensitive_data)
+    AgentRegistry.register_agent(agent, task_id)
     return agent, None
 
 async def run(task: str, model_provider: str = "openai_chat", model_name: str = "gpt-4o") -> None:
@@ -144,16 +143,22 @@ async def run(task: str, model_provider: str = "openai_chat", model_name: str = 
     result = llm.invoke(task)
     print(result.content)
 
-async def run_agent(task: str, model_provider: str, model_name: str) -> Any:
+async def run_agent(task: str, task_id: uuid.UUID = None, model_provider: str = "openai_chat", model_name: str = "gpt-4o") -> Any:
     """Run the browser agent with the specified task."""
+    # Create task ID if not provided
+    if task_id is None:
+        task_id = uuid.uuid4()
+        
     try:
-        logger.info(f"[RUN_AGENT] Starting agent run | Task: {task} | Model: {model_provider}/{model_name}")
+        logger.info(f"[RUN_AGENT] Starting agent run | Task ID: {task_id} | Task: {task} | Model: {model_provider}/{model_name}")
         agent, live_view_url = await create_browser_agent(
             task=task,
+            task_id=task_id,
             model_provider=model_provider,
             model_name=model_name
         )
         print(f"\n{'=' * 80}")
+        print(f"Task ID: {task_id}")
         print(f"Task: {task}")
         print(f"Model: {model_provider}/{model_name}")
         if live_view_url:
@@ -167,11 +172,19 @@ async def run_agent(task: str, model_provider: str, model_name: str) -> Any:
         print(f"✅ Agent execution complete")
         print(f"Final output: {result.final_result()}")
         print(f"{'=' * 80}\n")
-        logger.info(f"[RUN_AGENT] Agent execution complete | Task: {task}")
+        logger.info(f"[RUN_AGENT] Agent execution complete | Task ID: {task_id}")
+        
+        # Clean up
+        AgentRegistry.unregister_agent(task_id)
+        
         return result
     except Exception as e:
         logger.error(f"[RUN_AGENT] Error running agent: {e}", exc_info=True)
         print(f"\n❌ Error running agent: {e}")
+        
+        # Clean up on error
+        AgentRegistry.unregister_agent(task_id)
+        
         raise
 
 def main() -> None:
@@ -181,8 +194,13 @@ def main() -> None:
     parser.add_argument("--provider", default="openai_chat", help="Model provider (default: openai_chat)")
     parser.add_argument("--model", default="gpt-4o", help="Model name (default: gpt-4o)")
     args = parser.parse_args()
-    asyncio.run(run(
+    
+    # Generate a task ID
+    task_id = uuid.uuid4()
+    
+    asyncio.run(run_agent(
         task=args.task,
+        task_id=task_id,
         model_provider=args.provider,
         model_name=args.model,
     ))
